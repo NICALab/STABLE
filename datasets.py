@@ -1,125 +1,164 @@
-import glob
-import random
 import os
+import random
+import glob
 import numpy as np
-import torch
-
+from skimage import io
 from torch.utils.data import Dataset
-# from PIL import Image
+import torch
 import torchvision.transforms as transforms
-import skimage.io as io
-from skimage.color import gray2rgb
-# from PIL import Image
-# import torchvision.transforms.functional as TF
+from tqdm import tqdm
 
 class ImageDataset(Dataset):
-    def __init__(self, root, transforms_=None, mode="train", unaligned=True, in_datatype="f32", out_datatype="f32"):
-        # self.transform = transforms_
-        self.unaligned = unaligned
-        self.in_datatype = in_datatype
-        self.out_datatype = out_datatype
-        self.files_A = sorted(glob.glob(os.path.join(root, "%s/A" % mode) + "/*.*"))
-        self.files_B = sorted(glob.glob(os.path.join(root, "%s/B" % mode) + "/*.*"))
+    def __init__(self, base_dataset_dir, mode, normalize='dataset', augmentation=True, datatype='tif', seed=None, load_to_memory=True, size=(480, 480), test_idx=None):
+        assert mode in ['train', 'test'], "Mode should be 'train' or 'test'"
+        assert datatype in ['tif', 'png'], "Mode should be 'train' or 'test'"
+        assert normalize in ['dataset', 'data'], "Mode should be 'dataset' or 'data'"
 
-    def __getitem__(self, index):
-        # img_A = skio.open(self.files_A[index % len(self.files_A)])
+        self.test_idx = test_idx
+        self.datatype = datatype
+        self.size = size
+        self.augmentation = augmentation
+        self.normalize = normalize
+        self.load_to_memory = load_to_memory
 
-        # if self.unaligned:
-        #     img_B = Image.open(self.files_B[random.randint(0, len(self.files_B) - 1)])
-        # else:
-        #     img_B = Image.open(self.files_B[index % len(self.files_B)])
+        if seed != None:
+            torch.manual_seed(seed)
+            np.random.seed(seed)
+            random.seed(seed)
+            if torch.cuda.is_available():
+                torch.backends.cudnn.deterministic = True
+                torch.backends.cudnn.benchmark = False
+                torch.cuda.manual_seed(seed)
+                torch.cuda.manual_seed_all(seed)
 
-        # img_A = img_A[:1,:,:]
-        # img_B = img_B[:1,:,:]
+        data_dir = os.path.join(base_dataset_dir, mode)
+        if self.test_idx != None:
+            self.files_A = glob.glob(os.path.join(data_dir, "A") + "/*")[test_idx:test_idx+1]
+            self.files_B = glob.glob(os.path.join(data_dir, "B") + "/*")[test_idx:test_idx+1]
+        else:
+            self.files_A = glob.glob(os.path.join(data_dir, "A") + "/*")
+            self.files_B = glob.glob(os.path.join(data_dir, "B") + "/*")
 
-        # TODO: If A u32 If B blah
+        A_sum = 0.0
+        A_sum_sq = 0.0
+        A_n_samples = 0
 
-        A_path = self.files_A[index % len(self.files_A)]
-        if self.unaligned:
-            B_path = self.files_B[random.randint(0, len(self.files_B) - 1)]
-        else: 
-            B_path = self.files_B[index % len(self.files_B)]
+        B_sum = 0.0
+        B_sum_sq = 0.0
+        B_n_samples = 0
 
-        # A
-        if self.in_datatype == "f32":
-            A_img = io.imread(A_path).astype(np.float32)
-            A_img1 = torch.from_numpy(A_img)
-            if len(A_img1.shape)==3:
-                A_img2 = A_img1.numpy()
-            elif len(A_img1.shape)==2:
-                A_img2 = A_img1.unsqueeze(2).numpy()
-            A_img2 = A_img2/2047.5-1 #4095/2
-            img_A = torch.from_numpy(A_img2).permute(2, 0, 1)
-        elif self.in_datatype == "uint8":
-            A_img = io.imread(A_path).astype(np.int32)
-            if len(A_img.shape) < 3:
-                A_img = gray2rgb(A_img)
-            A_img1 = torch.from_numpy(A_img)
-            if len(A_img1.shape)==3:
-                A_img2 = A_img1.numpy()
-            elif len(A_img1.shape)==2:
-                A_img2 = A_img1.unsqueeze(2).numpy()
-            A_img2 = A_img2/255 #4095/2
-            img_A = torch.from_numpy(A_img2).permute(2, 0, 1)
-            # img_A = Image.open(A_path).convert("RGB")
-            # img_A = TF.to_tensor(img_A)
-            # img_A = img_A[:3,:,:]
+        if self.load_to_memory:
+            self.data_A = []
+            self.data_B = []
 
+        # if self.data_type == 'tif':
+        #     T, H, W = self.files_A.size
+        #     C = 1
+        # elif self.data_type == 'png':
+        #     H, W, C = self.files_A.size
 
-        # B
-        if self.out_datatype == "f32":
-            B_img = io.imread(B_path).astype(np.float32)
-            B_img1 = torch.from_numpy(B_img)
-            if len(B_img1.shape)==3:
-                B_img2 = B_img1.numpy()
-            elif len(B_img1.shape)==2:
-                B_img2 = B_img1.unsqueeze(2).numpy()
-            B_img2 = B_img2/2047.5-1
-            img_B = torch.from_numpy(B_img2).permute(2, 0, 1)
-        elif self.out_datatype == "uint8":
-            B_img = io.imread(B_path).astype(np.int32)
-            if len(B_img.shape) < 3:
-                B_img = gray2rgb(B_img)
-            B_img1 = torch.from_numpy(B_img)
-            if len(B_img1.shape)==3:
-                B_img2 = B_img1.numpy()
-            elif len(B_img1.shape)==2:
-                B_img2 = B_img1.unsqueeze(2).numpy()
-            B_img2 = B_img2/255
-            img_B = torch.from_numpy(B_img2).permute(2, 0, 1)
-            # c = Image.open(B_path).convert("RGB")
-            # img_B = TF.to_tensor(img_B)
-            # img_B = img_B[:3,:,:]
-            
+        if self.normalize == "dataset" or self.load_to_memory:
+            for file_A in tqdm(self.files_A, desc=f"Loading {mode}ing data from domain 1..."):
+                img_A = self.get_image(file_A)
+                
+                if self.normalize == "dataset":
+                    A_sum += torch.sum(img_A)
+                    A_sum_sq += torch.sum(img_A ** 2)
+                    A_n_samples += img_A.numel()
+                
+                if self.load_to_memory:
+                    self.data_A.append(img_A)
+                
+            for file_B in tqdm(self.files_B, desc=f"Loading {mode}ing data from domain 2..."):
+                img_B = self.get_image(file_B)
 
-        return {"A": img_A, "B": img_B}
+                if self.normalize == "dataset":
+                    B_sum += torch.sum(img_B)
+                    B_sum_sq += torch.sum(img_B ** 2)
+                    B_n_samples += img_B.numel()
+
+                if self.load_to_memory:
+                    self.data_B.append(img_B)
+
+        if self.normalize == "dataset":
+            self.A_mean = A_sum / A_n_samples
+            self.A_std = torch.sqrt(A_sum_sq / A_n_samples - self.A_mean ** 2)
+
+            for data_A in tqdm(self.data_A, desc=f"Normalizing {mode}ing data from domain 1..."):
+                data_A = (data_A - self.A_mean) / self.A_std
+
+            self.B_mean = B_sum / B_n_samples
+            self.B_std = torch.sqrt(B_sum_sq / B_n_samples - self.B_mean ** 2)
+
+            for data_B in tqdm(self.data_B, desc=f"Normalizing {mode}ing data from domain 2..."):
+                data_B = (data_B - self.B_mean) / self.B_std
+        
+        elif self.normalize == "data":
+            for data_A in tqdm(self.data_A, desc=f"Normalizing {mode}ing data from domain 1..."):
+                data_A = (data_A - torch.mean(data_A)) / torch.std(data_A)
+
+            for data_B in tqdm(self.data_B, desc=f"Normalizing {mode}ing data from domain 2..."):
+                data_B = (data_B - torch.mean(data_B)) / torch.std(data_B)
 
     def __len__(self):
-        return len(self.files_A)
+        return max(len(self.files_A), len(self.files_B))
 
-    # def transform(self, img1, img2):
-        # Resize
-        # resize = transforms.Resize(size=(512, 512))
-        # img1 = resize(img1)
-        # img2 = resize(img2)
+    def random_rotate(self, img):
+        rotation_angle = random.choice([90, 180, 270, 360])
+        img = transforms.functional.rotate(img, rotation_angle)
+        return img
 
-        # # Random crop
-        # i, j, h, w = transforms.RandomCrop.get_params(
-        #     img1, output_size=(256, 256))
-        # img1 = TF.crop(img1, i, j, h, w)
-        # img2 = TF.crop(img2, i, j, h, w)
-       
-        # # Random horizontal flipping
-        # if random.random() > 0.5:
-        #     img1 = TF.hflip(img1)
-        #     img2 = TF.hflip(img2)
+    def random_flip(self, img):
+        if random.random() < 0.5:
+            img = transforms.functional.hflip(img)
+        if random.random() < 0.5:
+            img = transforms.functional.vflip(img)
+        return img
+    
+    def get_image(self, file):
+        if self.datatype == 'png':
+            img = torch.from_numpy(io.imread(file)).float().permute(2, 0, 1) # [C, H, W]
+            if img.shape[0] > 3:
+                img = img[:3, :, :]
+        else:
+            img = torch.from_numpy(io.imread(file)).float() # [T, H, W]
+        return img
 
-        # # Random vertical flipping
-        # if random.random() > 0.5:
-        #     img1 = TF.vflip(img1)
-        #     img2 = TF.vflip(img2)
+    def __getitem__(self, index):
 
-        # Transform to tensor
-        # img1 = TF.to_tensor(img1)
-        # img2 = TF.to_tensor(img2)
-        # return img1, img2
+        if self.load_to_memory:
+            img_A = self.data_A[index % len(self.data_A)]
+            img_B = self.data_B[random.randint(0, len(self.data_B) - 1)]
+        else:
+            img_A = self.get_image(self.files_A[index % len(self.files_A)])
+            img_B = self.get_image(self.files_B[random.randint(0, len(self.files_B) - 1)])
+
+            if self.normalize == "data":
+                img_A = (img_A - torch.mean(img_A)) / torch.std(img_A)
+                img_B = (img_B - torch.mean(img_B)) / torch.std(img_B)
+            elif self.normalize == "dataset":
+                img_A = (img_A - self.A_mean) / self.A_std
+                img_B = (img_B - self.B_mean) / self.B_std
+
+        # print(img_A.shape, img_B.shape)
+
+        if self.datatype == 'tif':
+            random_idx_A = random.randint(10, img_A.shape[0]-10)
+            random_idx_B = random.randint(10, img_B.shape[0]-10)
+
+            img_A = img_A[random_idx_A:random_idx_A+1, :, :]
+            img_B = img_B[random_idx_B:random_idx_B+1, :, :]
+
+        if self.size != None:
+            random_crop = transforms.RandomCrop((self.size, self.size))
+            img_A = random_crop(img_A)
+            img_B = random_crop(img_B)
+
+        if self.augmentation:
+            img_A = self.random_rotate(img_A)
+            img_A = self.random_flip(img_A)
+
+            img_B = self.random_rotate(img_B)
+            img_B = self.random_flip(img_B)
+
+        return {"A": img_A, "B": img_B} 

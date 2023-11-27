@@ -1,15 +1,3 @@
-"""
-
-TODO List:
-1. Weight initialization (same)
-2. (Optional) Lambda learning rate scheduler
-3. Residual Block (same)
-4. Encoder (Output feature shape = Input image shape)
-5. Decoder/Generator (Input feature shape = Output image shape) --> Test if pure resnet works or copy the encoder
-6. Discriminator (the modified version with more options)
-
-"""
-
 import torch.nn as nn
 import torch.nn.functional as F
 import torch
@@ -17,6 +5,10 @@ from torch.autograd import Variable
 import numpy as np
 import torch.nn.init as init
 import functools
+import math
+import numbers
+from skimage import io
+from math import log2, sqrt
 
 def weights_init(init_type='gaussian'):
     def init_fun(m):
@@ -40,175 +32,34 @@ def weights_init(init_type='gaussian'):
 
     return init_fun
 
-"""
-Encoder
-Input: Image (C x W x H)
-Output: Feature (C x W x H)
-Layers:
-Initial ConvBlock: (1, 512, 512) --> (64, 512, 512)
-Downsample: (64, 512, 512) --> (256, 128, 128)
-Resblocks: (256, 128, 128) --> (256, 128, 128)
-Upsample: (256, 128, 128) --> (1, 512, 512)
-"""
+class LS_Discriminator(nn.Module):
+    def __init__(self, channels=1, img_size=128):
+        super(LS_Discriminator, self).__init__()
 
-class Encoder(nn.Module):
-    def __init__(self, in_channels=1, feat_channels=1, dim=64, n_residual=3, n_downsample=2, output_activation = "tanh"):
-        super(Encoder, self).__init__()
+        def discriminator_block(in_filters, out_filters, bn=True):
+            block = [nn.Conv2d(in_filters, out_filters, 3, 2, 1), nn.LeakyReLU(0.2, inplace=True), nn.Dropout2d(0.25)]
+            if bn:
+                block.append(nn.BatchNorm2d(out_filters, 0.8))
+            return block
 
-        # Initial convolution block
-        layers = [
-            nn.ReflectionPad2d(3),
-            nn.Conv2d(in_channels, dim, 7),
-            nn.InstanceNorm2d(dim),
-            nn.ReLU(inplace=True),
-        ]
+        self.model = nn.Sequential(
+            *discriminator_block(channels, 16, bn=False),
+            *discriminator_block(16, 32),
+            *discriminator_block(32, 64),
+            *discriminator_block(64, 128),
+        )
 
-        # Downsampling
-        for _ in range(n_downsample):
-            layers += [
-                nn.Conv2d(dim, dim * 2, 4, stride=2, padding=1),
-                nn.InstanceNorm2d(dim * 2),
-                nn.ReLU(inplace=True),
-            ]
-            dim *= 2
+        # The height and width of downsampled image
+        ds_size = img_size // 2 ** 4
+        self.adv_layer = nn.Linear(128 * ds_size ** 2, 1)
 
-        # Residual blocks
-        for _ in range(n_residual):
-            layers += [ResidualBlock(dim)]
+    def forward(self, img):
+        out = self.model(img)
+        out = out.view(out.shape[0], -1)
+        validity = self.adv_layer(out)
 
-        # dim = 256 at this point: dim = dim * 2 ** n_downsample
+        return validity
 
-        # Upsampling
-        for _ in range(n_downsample):
-            layers += [
-                nn.ConvTranspose2d(dim, dim // 2, 4, stride=2, padding=1),
-                nn.InstanceNorm2d(dim // 2),
-                nn.ReLU(inplace=True),
-            ]
-            dim = dim // 2
-
-        # Output layer
-        if output_activation == "tanh":
-            layers += [nn.ReflectionPad2d(3), nn.Conv2d(dim, feat_channels, 7), nn.Tanh()]
-        elif output_activation == "relu":
-            layers += [nn.ReflectionPad2d(3), nn.Conv2d(dim, feat_channels, 7), nn.ReLU()]
-
-        self.model = nn.Sequential(*layers)
-
-    def forward(self, x):
-        return self.model(x)
-    
-
-"""
-
-Decoder (Generator)
-Input: Feature (C x W x H)
-Output: Image (C x W x H)
-Layers:
-Downsample
-Resblocks: (C x W x H) --> (C x W x H)
-Upsample
-
-"""
-
-# class Decoder(nn.Module):
-#     def __init__(self, dim_residual=1, n_residual=3):
-#         super(Decoder, self).__init__()
-
-#         layers = []
-#         # Residual blocks
-#         for _ in range(n_residual):
-#             layers += [ResidualBlock(dim_residual)]
-
-#         self.model = nn.Sequential(*layers)
-
-#     def forward(self, x):
-#         x = self.model(x)
-#         return x
-
-class Decoder(nn.Module):
-    def __init__(self, feat_channels=1, out_channels=1, dim=64, n_residual=3, n_downsample=2, output_activation = "tanh"):
-        super(Decoder, self).__init__()
-
-        # Initial convolution block
-        layers = [
-            nn.ReflectionPad2d(3),
-            nn.Conv2d(feat_channels, dim, 7),
-            nn.InstanceNorm2d(dim),
-            nn.ReLU(inplace=True),
-        ]
-
-        # Downsampling
-        for _ in range(n_downsample):
-            layers += [
-                nn.Conv2d(dim, dim * 2, 4, stride=2, padding=1),
-                nn.InstanceNorm2d(dim * 2),
-                nn.ReLU(inplace=True),
-            ]
-            dim *= 2
-
-        # Residual blocks
-        for _ in range(n_residual):
-            layers += [ResidualBlock(dim)]
-
-        # dim = 256 at this point: dim = dim * 2 ** n_downsample
-
-        # Upsampling
-        for _ in range(n_downsample):
-            layers += [
-                nn.ConvTranspose2d(dim, dim // 2, 4, stride=2, padding=1),
-                nn.InstanceNorm2d(dim // 2),
-                nn.ReLU(inplace=True),
-            ]
-            dim = dim // 2
-
-        # Output layer
-        if output_activation == "tanh":
-            layers += [nn.ReflectionPad2d(3), nn.Conv2d(dim, out_channels, 7), nn.Tanh()]
-        elif output_activation == "relu":
-            layers += [nn.ReflectionPad2d(3), nn.Conv2d(dim, out_channels, 7), nn.ReLU()]
-
-        self.model = nn.Sequential(*layers)
-
-    def forward(self, x):
-        return self.model(x)
-
-"""
-
-Residual Block
-Input: Tensor (C x W x H)
-Output: Tensor (C x W x H)
-
-"""
-class ResidualBlock(nn.Module):
-    def __init__(self, features):
-        super(ResidualBlock, self).__init__()
-
-        conv_block = [
-            nn.ReflectionPad2d(1),
-            nn.Conv2d(features, features, 3),
-            nn.InstanceNorm2d(features),
-            nn.ReLU(inplace=True),
-            nn.ReflectionPad2d(1),
-            nn.Conv2d(features, features, 3),
-            nn.InstanceNorm2d(features),
-        ]
-
-        self.conv_block = nn.Sequential(*conv_block)
-
-    def forward(self, x):
-        # print("Shape of input is: ", x.shape)
-        # print("Shape of res is: ", self.conv_block(x).shape)
-        return x + self.conv_block(x)
-    
-
-"""
-
-Discriminator
-Input: Image (C x W x H)
-Output: 
-
-"""
 
 class MultiDiscriminator(nn.Module):
     def __init__(self, channels=1, num_scales=3, downsample_stride=2):
@@ -239,247 +90,456 @@ class MultiDiscriminator(nn.Module):
         self.downsample = nn.AvgPool2d(3, stride=downsample_stride, padding=[1, 1], 
                                        count_include_pad=False)
 
-    # def compute_loss(self, x, gt):
-    #     """Computes the MSE between model output and scalar gt"""
-    #     # loss = sum([torch.mean((out - gt) ** 2) for out in self.forward(x)])
-    #     loss = 0
-    #     n=0
-    #     for out in self.forward(x):
-    #         squared_diff = (out - gt) ** 2
-    #         loss += torch.mean(squared_diff)
-    #         # print(f"{n}: Mean squared_diff: {torch.mean(squared_diff)} and current loss: {loss}")
-    #         # print(f"{n}: Out shape: {out.shape} ")
-    #         n=n+1
-    #     return loss
-
     def forward(self, x):
         outputs = []
         # cnt = 0
         for m in self.models:
             # print("Discriminator count: %d. Image shape is: %s." % (cnt, str(x.shape)))
+            # out_save = x[0].cpu().float().detach().numpy()        
+            # io.imsave(f"out_{cnt}.tif", out_save, metadata={'axes': 'TYX'})
             outputs.append(m(x))
             x = self.downsample(x)  # Downsample resolution
             # cnt += 1
         return outputs
-    
 
-
-"""
-
-Multi-scale Multi-class Discriminator
-Input: 3D tensor (C x W x H)
-Output: 1D Class
-
-"""  
-
-class MultiScaleMultiClassDiscriminator(nn.Module):
-    def __init__(self, channels=1, num_classes=4, num_scales=3, downsample_stride=2, last_layer='adaptAvgPool'):
-        super(MultiScaleMultiClassDiscriminator, self).__init__()
-
-        self.last_layer = last_layer
-
-        def discriminator_block(in_filters, out_filters, normalize=True):
-            """Returns downsampling layers of each discriminator block"""
-            layers = [nn.Conv2d(in_filters, out_filters, 4, stride=2, padding=1)]
-            if normalize:
-                layers.append(nn.InstanceNorm2d(out_filters))
-            layers.append(nn.LeakyReLU(0.2, inplace=True))
-            return layers
-
-        self.models = nn.ModuleList()
-        if self.last_layer == 'adaptAvgPool':
-            for i in range(num_scales):
-                self.models.add_module(
-                    f"disc_{i}",
-                    nn.Sequential(
-                        *discriminator_block(channels, 64, normalize=False),
-                        *discriminator_block(64, 128),
-                        *discriminator_block(128, 256),
-                        *discriminator_block(256, 512),
-                        nn.Conv2d(512, num_classes, 3, padding=1),  # Output is num_classes probabilities
-                        nn.AdaptiveAvgPool2d((1, 1)),  # Global average pooling
-                        nn.Flatten(),  # Flatten the output
-                        # nn.LogSoftmax(dim=1)
-                        # nn.Softmax(dim=1),  # Apply softmax to output probabilities
-                    )
-                )
-        elif self.last_layer == 'linear':
-            for i in range(num_scales):
-                self.models.add_module(
-                    f"disc_{i}",
-                    nn.Sequential(
-                        *discriminator_block(channels, 64, normalize=False),
-                        *discriminator_block(64, 128),
-                        *discriminator_block(128, 256),
-                        *discriminator_block(256, 512),
-                        nn.Conv2d(512, num_classes, 3, padding=1),  # Output is num_classes probabilities
-                        # nn.AdaptiveAvgPool2d((1, 1)),  # Global average pooling
-                        nn.Flatten(),  # Flatten the output
-                        # nn.LogSoftmax(dim=1)
-                        # nn.Softmax(dim=1),  # Apply softmax to output probabilities
-                    )
-                )
-
-        self.downsample = nn.AvgPool2d(3, stride=downsample_stride, padding=[1, 1], count_include_pad=False)
-
-    def forward(self, input):
-        outputs = []
-        if self.last_layer == 'adaptAvgPool':
-            for m in self.models:
-                outputs.append(m(input))
-                input = self.downsample(input)  # Downsample resolution
-        elif self.last_layer == 'linear':
-            for m in self.models:
-                # TODO: need to test the following shape outputs for both rgb and grayscale
-                size = self.num_class * input.shape[1] * input.shape[2] * input.shape[3]
-                fc = nn.Linear(size, self.num_classes)
-                outputs.append(fc(m(input)))
-                input = self.downsample(input)  # Downsample resolution
-        return outputs
-    
-
-# Not using adaptive avg pooling
-# class MultiScaleMultiClassDiscriminator(nn.Module):
-#     def __init__(self, channels=1, num_classes=4, num_scales=3, downsample_stride=2):
-#         super(MultiScaleMultiClassDiscriminator, self).__init__()
-
-#         self.num_class = num_classes
-
-#         def discriminator_block(in_filters, out_filters, normalize=True):
-#             """Returns downsampling layers of each discriminator block"""
-#             layers = [nn.Conv2d(in_filters, out_filters, 4, stride=2, padding=1)]
-#             if normalize:
-#                 layers.append(nn.InstanceNorm2d(out_filters))
-#             layers.append(nn.LeakyReLU(0.2, inplace=True))
-#             return layers
-        
-#         self.models = nn.ModuleList()
-#         for i in range(num_scales):
-#             self.models.add_module(
-#                 f"disc_{i}",
-#                 nn.Sequential(
-#                     *discriminator_block(channels, 64, normalize=False),
-#                     *discriminator_block(64, 128),
-#                     *discriminator_block(128, 256),
-#                     *discriminator_block(256, 512),
-#                     nn.Conv2d(512, num_classes, 3, padding=1),  # Output is num_classes probabilities
-#                     # nn.AdaptiveAvgPool2d((1, 1)),  # Global average pooling
-#                     nn.Flatten(),  # Flatten the output
-#                     # nn.LogSoftmax(dim=1)
-#                     # nn.Softmax(dim=1),  # Apply softmax to output probabilities
-#                 )
-#             )
-
-#         self.downsample = nn.AvgPool2d(3, stride=downsample_stride, padding=[1, 1], count_include_pad=False)
-
-#     def forward(self, input):
-#         outputs = []
-#         for m in self.models:
-#             # TODO: need to test the following shape outputs for both rgb and grayscale
-#             size = self.num_class * input.shape[1] * input.shape[2] * input.shape[3]
-#             fc = nn.Linear(size, self.num_classes)
-#             outputs.append(fc(m(input)))
-#             input = self.downsample(input)  # Downsample resolution
-#         return outputs
-
-
-class UnetGenerator(nn.Module):
-    """Create a Unet-based generator"""
-
-    def __init__(self, input_nc, output_nc, num_downs, ngf=64, norm_layer=nn.BatchNorm2d, use_dropout=False):
-        """Construct a Unet generator
-        Parameters:
-            input_nc (int)  -- the number of channels in input images
-            output_nc (int) -- the number of channels in output images
-            num_downs (int) -- the number of downsamplings in UNet. For example, # if |num_downs| == 7,
-                                image of size 128x128 will become of size 1x1 # at the bottleneck
-            ngf (int)       -- the number of filters in the last conv layer
-            norm_layer      -- normalization layer
-
-        We construct the U-Net from the innermost layer to the outermost layer.
-        It is a recursive process.
-        """
-        super(UnetGenerator, self).__init__()
-        # construct unet structure
-        unet_block = UnetSkipConnectionBlock(ngf * 8, ngf * 8, input_nc=None, submodule=None, norm_layer=norm_layer, innermost=True)  # add the innermost layer
-        for i in range(num_downs - 5):          # add intermediate layers with ngf * 8 filters
-            unet_block = UnetSkipConnectionBlock(ngf * 8, ngf * 8, input_nc=None, submodule=unet_block, norm_layer=norm_layer, use_dropout=use_dropout)
-        # gradually reduce the number of filters from ngf * 8 to ngf
-        unet_block = UnetSkipConnectionBlock(ngf * 4, ngf * 8, input_nc=None, submodule=unet_block, norm_layer=norm_layer)
-        unet_block = UnetSkipConnectionBlock(ngf * 2, ngf * 4, input_nc=None, submodule=unet_block, norm_layer=norm_layer)
-        unet_block = UnetSkipConnectionBlock(ngf, ngf * 2, input_nc=None, submodule=unet_block, norm_layer=norm_layer)
-        self.model = UnetSkipConnectionBlock(output_nc, ngf, input_nc=input_nc, submodule=unet_block, outermost=True, norm_layer=norm_layer)  # add the outermost layer
-
-    def forward(self, input):
-        """Standard forward"""
-        return self.model(input)
-
-
-class UnetSkipConnectionBlock(nn.Module):
-    """Defines the Unet submodule with skip connection.
-        X -------------------identity----------------------
-        |-- downsampling -- |submodule| -- upsampling --|
-    """
-
-    def __init__(self, outer_nc, inner_nc, input_nc=None,
-                 submodule=None, outermost=False, innermost=False, norm_layer=nn.BatchNorm2d, use_dropout=False):
-        """Construct a Unet submodule with skip connections.
-
-        Parameters:
-            outer_nc (int) -- the number of filters in the outer conv layer
-            inner_nc (int) -- the number of filters in the inner conv layer
-            input_nc (int) -- the number of channels in input images/features
-            submodule (UnetSkipConnectionBlock) -- previously defined submodules
-            outermost (bool)    -- if this module is the outermost module
-            innermost (bool)    -- if this module is the innermost module
-            norm_layer          -- normalization layer
-            use_dropout (bool)  -- if use dropout layers.
-        """
-        super(UnetSkipConnectionBlock, self).__init__()
-        self.outermost = outermost
-        if type(norm_layer) == functools.partial:
-            use_bias = norm_layer.func == nn.InstanceNorm2d
-        else:
-            use_bias = norm_layer == nn.InstanceNorm2d
-        if input_nc is None:
-            input_nc = outer_nc
-        downconv = nn.Conv2d(input_nc, inner_nc, kernel_size=4,
-                             stride=2, padding=1, bias=use_bias)
-        downrelu = nn.LeakyReLU(0.2, True)
-        downnorm = norm_layer(inner_nc)
-        uprelu = nn.ReLU(True)
-        upnorm = norm_layer(outer_nc)
-
-        if outermost:
-            upconv = nn.ConvTranspose2d(inner_nc * 2, outer_nc,
-                                        kernel_size=4, stride=2,
-                                        padding=1)
-            down = [downconv]
-            up = [uprelu, upconv, nn.Tanh()]
-            model = down + [submodule] + up
-        elif innermost:
-            upconv = nn.ConvTranspose2d(inner_nc, outer_nc,
-                                        kernel_size=4, stride=2,
-                                        padding=1, bias=use_bias)
-            down = [downrelu, downconv]
-            up = [uprelu, upconv, upnorm]
-            model = down + up
-        else:
-            upconv = nn.ConvTranspose2d(inner_nc * 2, outer_nc,
-                                        kernel_size=4, stride=2,
-                                        padding=1, bias=use_bias)
-            down = [downrelu, downconv, downnorm]
-            up = [uprelu, upconv, upnorm]
-
-            if use_dropout:
-                model = down + [submodule] + up + [nn.Dropout(0.5)]
-            else:
-                model = down + [submodule] + up
-
-        self.model = nn.Sequential(*model)
+class MLP(nn.Module):
+    def __init__(self, input_dim, output_dim, dim=256, n_blk=3, activ="relu"):
+        super(MLP, self).__init__()
+        layers = [nn.Linear(input_dim, dim), nn.ReLU(inplace=True)]
+        for _ in range(n_blk - 2):
+            layers += [nn.Linear(dim, dim), nn.ReLU(inplace=True)]
+        layers += [nn.Linear(dim, output_dim)]
+        self.model = nn.Sequential(*layers)
 
     def forward(self, x):
-        if self.outermost:
-            return self.model(x)
-        else:   # add skip connections
-            return torch.cat([x, self.model(x)], 1)
+        return self.model(x.view(x.size(0), -1))
+
+class Unet(nn.Module):
+    ''' kernel_size = 3, stride = 1 <-
+    '''
+    def __init__(self, input_channels = 1, output_channels = 1, upsampling_method = "InterpolationConv", std = 0, stretch=0, temperature=6, norm=True, conv_type="Conv2d"):
+        super(Unet, self).__init__()
+        
+        self.temperature = temperature
+        self.stretch = stretch
+        self.std = std
+        # self.sigmoid = sigmoid
+        self.upsampling_method = upsampling_method
+        self.conv_type = conv_type
+        self.norm = norm
+
+        def Upsample(in_channels, out_channels, kernel_size, bias, stride=1, padding=0):
+            if self.upsampling_method == "ConvTranspose":
+                return nn.ConvTranspose2d(in_channels=in_channels, out_channels=out_channels,
+                                          kernel_size=kernel_size, stride=stride, padding=padding, bias=bias)
+            elif self.upsampling_method == "InterpolationConv":
+                layers = []
+                layers += [nn.Upsample(scale_factor=2, mode='nearest')]
+                layers += [nn.ReflectionPad2d(1)]
+                layers += [nn.Conv2d(in_channels=in_channels, out_channels=out_channels,
+                                     kernel_size=3, stride=1, padding=0, bias=bias)]
+                return nn.Sequential(*layers)
+
+        def CBR2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=True):
+            layers = []
+            if self.conv_type == "Conv2d":
+                layers += [nn.Conv2d(in_channels=in_channels, out_channels=out_channels,
+                                kernel_size=kernel_size, stride=stride, padding=padding,
+                                bias=bias)]
+                if self.norm:
+                    layers += [nn.BatchNorm2d(num_features=out_channels)]
+            elif self.conv_type == "DemodulatedConv2d":
+                layers += [DemodulatedConv2d(in_channels=in_channels, out_channels=out_channels,
+                                kernel_size=kernel_size, stride=stride, padding=padding,
+                                bias=bias)]
+            layers += [nn.ReLU()]
+            cbr = nn.Sequential(*layers)
+            return cbr
+
+        # def CBR2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=True):
+        #     layers = []
+        #     layers += [nn.Conv2d(in_channels=in_channels, out_channels=out_channels,
+        #                          kernel_size=kernel_size, stride=stride, padding=padding,
+        #                          bias=bias)]
+        #     layers += [nn.BatchNorm2d(num_features=out_channels)]
+        #     layers += [nn.ReLU()]
+        #     cbr = nn.Sequential(*layers)
+        #     return cbr
+        
+        self.input_channels = input_channels
+        self.output_channels = output_channels
+        # Contracting path
+        self.enc1_1 = CBR2d(in_channels=self.input_channels, out_channels=16)
+        self.enc1_2 = CBR2d(in_channels=16, out_channels=16)
+        self.pool1 = nn.MaxPool2d(kernel_size=2)
+        self.enc2_1 = CBR2d(in_channels=16, out_channels=32)
+        self.enc2_2 = CBR2d(in_channels=32, out_channels=32)
+        self.pool2 = nn.MaxPool2d(kernel_size=2)
+        self.enc3_1 = CBR2d(in_channels=32, out_channels=64)
+        self.enc3_2 = CBR2d(in_channels=64, out_channels=64)
+        self.pool3 = nn.MaxPool2d(kernel_size=2)
+        self.enc4_1 = CBR2d(in_channels=64, out_channels=128)
+        self.enc4_2 = CBR2d(in_channels=128, out_channels=128)
+        self.pool4 = nn.MaxPool2d(kernel_size=2)
+        self.enc5_1 = CBR2d(in_channels=128, out_channels=256)
+        # Expansive path
+        self.dec5_1 = CBR2d(in_channels=256, out_channels=128)
+        self.unpool4 = Upsample(in_channels=128, out_channels=128,
+                                          kernel_size=2, stride=2, padding=0, bias=True)
+        # self.unpool4 = nn.ConvTranspose2d(in_channels=128, out_channels=128,
+        #                                   kernel_size=2, stride=2, padding=0, bias=True)
+        self.dec4_2 = CBR2d(in_channels=2 * 128, out_channels=128)
+        self.dec4_1 = CBR2d(in_channels=128, out_channels=64)
+        self.unpool3 = Upsample(in_channels=64, out_channels=64,
+                                          kernel_size=2, stride=2, padding=0, bias=True)
+        # self.unpool3 = nn.ConvTranspose2d(in_channels=64, out_channels=64,
+        #                                   kernel_size=2, stride=2, padding=0, bias=True)
+        self.dec3_2 = CBR2d(in_channels=2 * 64, out_channels=64)
+        self.dec3_1 = CBR2d(in_channels=64, out_channels=32)
+        self.unpool2 = Upsample(in_channels=32, out_channels=32,
+                                          kernel_size=2, stride=2, padding=0, bias=True)
+        # self.unpool2 = nn.ConvTranspose2d(in_channels=32, out_channels=32,
+        #                                   kernel_size=2, stride=2, padding=0, bias=True)
+        self.dec2_2 = CBR2d(in_channels=2 * 32, out_channels=32)
+        self.dec2_1 = CBR2d(in_channels=32, out_channels=16)
+        self.unpool1 = Upsample(in_channels=16, out_channels=16,
+                                          kernel_size=2, stride=2, padding=0, bias=True)
+        # self.unpool1 = nn.ConvTranspose2d(in_channels=16, out_channels=16,
+        #                                   kernel_size=2, stride=2, padding=0, bias=True)
+        self.dec1_2 = CBR2d(in_channels=2 * 16, out_channels=16)
+        self.dec1_1 = CBR2d(in_channels=16, out_channels=16)
+        # self.fc1 = nn.Conv2d(in_channels=16, out_channels=2, kernel_size=1, stride=1, padding=0, bias=True)
+        self.fc2 = nn.Conv2d(in_channels=16, out_channels=self.output_channels, kernel_size=1, stride=1, padding=0, bias=True)
+
+    def forward(self, x):
+        enc1_1 = self.enc1_1(x)
+        enc1_2 = self.enc1_2(enc1_1)
+        pool1 = self.pool1(enc1_2)
+        enc2_1 = self.enc2_1(pool1)
+        enc2_2 = self.enc2_2(enc2_1)
+        pool2 = self.pool2(enc2_2)
+        enc3_1 = self.enc3_1(pool2)
+        enc3_2 = self.enc3_2(enc3_1)
+        pool3 = self.pool3(enc3_2)
+        enc4_1 = self.enc4_1(pool3)
+        enc4_2 = self.enc4_2(enc4_1)
+        pool4 = self.pool4(enc4_2)
+        enc5_1 = self.enc5_1(pool4)
+        dec5_1 = self.dec5_1(enc5_1)
+        # print(dec5_1.shape)
+        unpool4 = self.unpool4(dec5_1)
+        # print(unpool4.shape)
+        # exit()
+        cat4 = torch.cat((unpool4, enc4_2), dim=1)
+        dec4_2 = self.dec4_2(cat4)
+        dec4_1 = self.dec4_1(dec4_2)
+        unpool3 = self.unpool3(dec4_1)
+        cat3 = torch.cat((unpool3, enc3_2), dim=1)
+        dec3_2 = self.dec3_2(cat3)
+        dec3_1 = self.dec3_1(dec3_2)
+        unpool2 = self.unpool2(dec3_1)
+        cat2 = torch.cat((unpool2, enc2_2), dim=1)
+        dec2_2 = self.dec2_2(cat2)
+        dec2_1 = self.dec2_1(dec2_2)
+        unpool1 = self.unpool1(dec2_1)
+        cat1 = torch.cat((unpool1, enc1_2), dim=1)
+        dec1_2 = self.dec1_2(cat1)
+        dec1_1 = self.dec1_1(dec1_2)
+
+        # weight map
+        pred_w = self.fc2(dec1_1)
+        # pred_w = self.fc2(dec2_1)
+        # interpolate w
+        # pred_w = F.interpolate(pred_w, scale_factor=2, mode='nearest')
+
+        # print(pred_w.shape)
+        # exit()
+
+        if self.std == 1:
+            eps = 1e-8
+            pred_w = (pred_w - torch.mean(pred_w).detach()) / torch.sqrt(torch.var(pred_w).detach() + eps)
+        # # if self.sigmoid == 1:
+        # #     pred_w = torch.sigmoid(pred_w)
+        #     # print("sigmoid")
+
+        # if self.stretch == 1:
+        #     # if self.std == 1:
+        #     #     pred_w = (pred_w - torch.mean(pred_w).detach()) / torch.sqrt(torch.var(pred_w).detach())
+        #     pred_w = torch.sigmoid(pred_w * self.temperature)
+        return pred_w
+
+
+class DemodulatedConv2d(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=0, bias=False, dilation=1):
+        super().__init__()
+
+        self.eps = 1e-8
+        self.kernel_size = kernel_size
+        self.in_channel = in_channels
+        self.out_channel = out_channels
+
+        self.weight = nn.Parameter(
+            torch.randn(1, out_channels, in_channels, kernel_size, kernel_size)
+        )
+        self.bias = None
+        if bias:
+            self.bias = nn.Parameter(torch.randn(out_channels))
+
+        self.stride = stride
+        self.padding = padding
+        self.dilation = dilation
+
+    def forward(self, input):
+        batch, in_channel, height, width = input.shape
+
+        demod = torch.rsqrt(self.weight.pow(2).sum([2, 3, 4]) + 1e-8)
+        weight = self.weight * demod.view(batch, self.out_channel, 1, 1, 1)
+
+        weight = weight.view(
+            batch * self.out_channel, in_channel, self.kernel_size, self.kernel_size
+        )
+
+        input = input.view(1, batch * in_channel, height, width)
+        if self.bias is None:
+            out = F.conv2d(input, weight, padding=self.padding, groups=batch, dilation=self.dilation, stride=self.stride)
+        else:
+            out = F.conv2d(input, weight, bias=self.bias, padding=self.padding, groups=batch, dilation=self.dilation, stride=self.stride)
+        _, _, height, width = out.shape
+        out = out.view(batch, self.out_channel, height, width)
+
+        return out
+
+
+# import torch
+# import torch.nn as nn
+# import torch.nn.functional as F
+# from math import sqrt
+
+# class EqualizedWeight(nn.Module):
+#     def __init__(self, shape):
+#         super().__init__()
+#         self.c = 1 / sqrt(sum(shape[1:]))
+#         self.weight = nn.Parameter(torch.randn(shape))
+
+#     def forward(self):
+#         return self.weight * self.c
+
+# class DemodulatedConv2d(nn.Module):
+#     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=True, demodulate=True, eps=1e-8):
+#         super(DemodulatedConv2d, self).__init__()
+#         self.demodulate = demodulate
+#         self.eps = eps
+
+#         # Create an equalized weight
+#         self.weight = EqualizedWeight([out_channels, in_channels, kernel_size, kernel_size])
+#         self.bias = nn.Parameter(torch.zeros(out_channels)) if bias else None
+#         self.stride = stride
+#         self.padding = padding
+#         self.dilation = dilation
+#         self.groups = groups
+
+#     def forward(self, x):
+#         weights = self.weight()[None, :, :, :, :]
+
+#         if self.demodulate:
+#             # Demodulate the weights
+#             sigma_inv = torch.rsqrt((weights ** 2).sum(dim=(2, 3, 4), keepdim=True) + self.eps)
+#             weights = weights * sigma_inv
+
+#         return F.conv2d(x, weights[0], self.bias, self.stride, self.padding, self.dilation, self.groups)
+
+
+
+
+# class EqualizedWeight(nn.Module):
+
+#     def __init__(self, shape):
+
+#         super().__init__()
+
+#         self.c = 1 / sqrt(np.prod(shape[1:]))
+#         self.weight = nn.Parameter(torch.randn(shape))
+
+#     def forward(self):
+#         return self.weight * self.c
+
+# class Conv2dWeightModulate(nn.Module):
+
+#     def __init__(self, in_features, out_features, kernel_size, demodulate = True, eps = 1e-8):
+
+#         super().__init__()
+#         self.out_features = out_features
+#         self.demodulate = demodulate
+#         self.padding = (kernel_size - 1) // 2
+
+#         self.weight = EqualizedWeight([out_features, in_features, kernel_size, kernel_size])
+#         self.eps = eps
+
+#     def forward(self, x, s):
+
+#         b, _, h, w = x.shape
+
+#         s = s[:, None, :, None, None]
+#         weights = self.weight()[None, :, :, :, :]
+#         weights = weights * s
+
+#         if self.demodulate:
+#             sigma_inv = torch.rsqrt((weights ** 2).sum(dim=(2, 3, 4), keepdim=True) + self.eps)
+#             weights = weights * sigma_inv
+
+#         x = x.reshape(1, -1, h, w)
+
+#         _, _, *ws = weights.shape
+#         weights = weights.reshape(b * self.out_features, *ws)
+
+#         x = F.conv2d(x, weights, padding=self.padding, groups=b)
+
+#         return x.reshape(-1, self.out_features, h, w)
+
+
+
+
+
+
+
+
+
+
+# class Unet(nn.Module):
+#     ''' kernel_size = 3, stride = 1 <-
+#     '''
+#     def __init__(self, input_channels = 1, output_channels = 1, upsampling_method = "InterpolationConv", std = 0, stretch=0, temperature=6, norm=True):
+#         super(Unet, self).__init__()
+        
+#         self.temperature = temperature
+#         self.stretch = stretch
+#         self.std = std
+#         # self.sigmoid = sigmoid
+#         self.upsampling_method = upsampling_method
+#         self.norm = norm
+
+#         def Upsample(in_channels, out_channels, kernel_size, bias, stride=1, padding=0):
+#             if self.upsampling_method == "ConvTranspose":
+#                 return nn.ConvTranspose2d(in_channels=in_channels, out_channels=out_channels,
+#                                           kernel_size=kernel_size, stride=stride, padding=padding, bias=bias)
+#             elif self.upsampling_method == "InterpolationConv":
+#                 layers = []
+#                 layers += [nn.Upsample(scale_factor=2, mode='nearest')]
+#                 layers += [nn.ReflectionPad2d(1)]
+#                 layers += [nn.Conv2d(in_channels=in_channels, out_channels=out_channels,
+#                                      kernel_size=3, stride=1, padding=0, bias=bias)]
+#                 return nn.Sequential(*layers)
+
+#         def CBR2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=True):
+#             layers = []
+#             layers += [nn.Conv2d(in_channels=in_channels, out_channels=out_channels,
+#                                  kernel_size=kernel_size, stride=stride, padding=padding,
+#                                  bias=bias)]
+#             if self.norm:
+#                 layers += [nn.BatchNorm2d(num_features=out_channels)]
+#             layers += [nn.ReLU()]
+#             cbr = nn.Sequential(*layers)
+#             return cbr
+        
+#         self.input_channels = input_channels
+#         self.output_channels = output_channels
+#         # Contracting path
+#         self.enc1_1 = CBR2d(in_channels=self.input_channels, out_channels=16)
+#         self.enc1_2 = CBR2d(in_channels=16, out_channels=16)
+#         self.pool1 = nn.MaxPool2d(kernel_size=2)
+#         self.enc2_1 = CBR2d(in_channels=16, out_channels=32)
+#         self.enc2_2 = CBR2d(in_channels=32, out_channels=32)
+#         self.pool2 = nn.MaxPool2d(kernel_size=2)
+#         self.enc3_1 = CBR2d(in_channels=32, out_channels=64)
+#         self.enc3_2 = CBR2d(in_channels=64, out_channels=64)
+#         self.pool3 = nn.MaxPool2d(kernel_size=2)
+#         self.enc4_1 = CBR2d(in_channels=64, out_channels=128)
+#         self.enc4_2 = CBR2d(in_channels=128, out_channels=128)
+#         self.pool4 = nn.MaxPool2d(kernel_size=2)
+#         self.enc5_1 = CBR2d(in_channels=128, out_channels=256)
+#         # Expansive path
+#         self.dec5_1 = CBR2d(in_channels=256, out_channels=128)
+
+#         self.unpool4 = Upsample(in_channels=128, out_channels=128,
+#                                           kernel_size=2, stride=2, padding=0, bias=True)
+#         # self.unpool4 = nn.ConvTranspose2d(in_channels=128, out_channels=128,
+#         #                                   kernel_size=2, stride=2, padding=0, bias=True)
+#         self.dec4_2 = CBR2d(in_channels=2 * 128, out_channels=128)
+#         self.dec4_1 = CBR2d(in_channels=128, out_channels=64)
+#         self.unpool3 = Upsample(in_channels=64, out_channels=64,
+#                                           kernel_size=2, stride=2, padding=0, bias=True)
+#         # self.unpool3 = nn.ConvTranspose2d(in_channels=64, out_channels=64,
+#         #                                   kernel_size=2, stride=2, padding=0, bias=True)
+#         self.dec3_2 = CBR2d(in_channels=2 * 64, out_channels=64)
+#         self.dec3_1 = CBR2d(in_channels=64, out_channels=32)
+#         self.unpool2 = Upsample(in_channels=32, out_channels=32,
+#                                           kernel_size=2, stride=2, padding=0, bias=True)
+#         # self.unpool2 = nn.ConvTranspose2d(in_channels=32, out_channels=32,
+#         #                                   kernel_size=2, stride=2, padding=0, bias=True)
+#         self.dec2_2 = CBR2d(in_channels=2 * 32, out_channels=32)
+#         self.dec2_1 = CBR2d(in_channels=32, out_channels=16)
+#         self.unpool1 = Upsample(in_channels=16, out_channels=16,
+#                                           kernel_size=2, stride=2, padding=0, bias=True)
+#         # self.unpool1 = nn.ConvTranspose2d(in_channels=16, out_channels=16,
+#         #                                   kernel_size=2, stride=2, padding=0, bias=True)
+#         self.dec1_2 = CBR2d(in_channels=2 * 16, out_channels=16)
+#         self.dec1_1 = CBR2d(in_channels=16, out_channels=16)
+#         # self.fc1 = nn.Conv2d(in_channels=16, out_channels=2, kernel_size=1, stride=1, padding=0, bias=True)
+#         self.fc2 = nn.Conv2d(in_channels=16, out_channels=self.output_channels, kernel_size=1, stride=1, padding=0, bias=True)
+
+#     def forward(self, x):
+#         enc1_1 = self.enc1_1(x)
+#         enc1_2 = self.enc1_2(enc1_1)
+#         pool1 = self.pool1(enc1_2)
+#         enc2_1 = self.enc2_1(pool1)
+#         enc2_2 = self.enc2_2(enc2_1)
+#         pool2 = self.pool2(enc2_2)
+#         enc3_1 = self.enc3_1(pool2)
+#         enc3_2 = self.enc3_2(enc3_1)
+#         pool3 = self.pool3(enc3_2)
+#         enc4_1 = self.enc4_1(pool3)
+#         enc4_2 = self.enc4_2(enc4_1)
+#         pool4 = self.pool4(enc4_2)
+#         enc5_1 = self.enc5_1(pool4)
+#         dec5_1 = self.dec5_1(enc5_1)
+#         # print(dec5_1.shape)
+#         unpool4 = self.unpool4(dec5_1)
+#         # print(unpool4.shape)
+#         # exit()
+#         cat4 = torch.cat((unpool4, enc4_2), dim=1)
+#         dec4_2 = self.dec4_2(cat4)
+#         dec4_1 = self.dec4_1(dec4_2)
+#         unpool3 = self.unpool3(dec4_1)
+#         cat3 = torch.cat((unpool3, enc3_2), dim=1)
+#         dec3_2 = self.dec3_2(cat3)
+#         dec3_1 = self.dec3_1(dec3_2)
+#         unpool2 = self.unpool2(dec3_1)
+#         cat2 = torch.cat((unpool2, enc2_2), dim=1)
+#         dec2_2 = self.dec2_2(cat2)
+#         dec2_1 = self.dec2_1(dec2_2)
+#         unpool1 = self.unpool1(dec2_1)
+#         cat1 = torch.cat((unpool1, enc1_2), dim=1)
+#         dec1_2 = self.dec1_2(cat1)
+#         dec1_1 = self.dec1_1(dec1_2)
+
+#         # weight map
+#         pred_w = self.fc2(dec1_1)
+#         # pred_w = self.fc2(dec2_1)
+#         # interpolate w
+#         # pred_w = F.interpolate(pred_w, scale_factor=2, mode='nearest')
+
+#         # print(pred_w.shape)
+#         # exit()
+
+#         if self.std == 1:
+#             eps = 1e-8
+#             pred_w = (pred_w - torch.mean(pred_w).detach()) / torch.sqrt(torch.var(pred_w).detach() + eps)
+#         # # if self.sigmoid == 1:
+#         # #     pred_w = torch.sigmoid(pred_w)
+#         #     # print("sigmoid")
+
+#         # if self.stretch == 1:
+#         #     # if self.std == 1:
+#         #     #     pred_w = (pred_w - torch.mean(pred_w).detach()) / torch.sqrt(torch.var(pred_w).detach())
+#         #     pred_w = torch.sigmoid(pred_w * self.temperature)
+#         return pred_w
