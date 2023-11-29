@@ -38,15 +38,15 @@ parser.add_argument("--epoch", type=int, default=0, help="epoch to start trainin
 parser.add_argument("--n_epochs", type=int, default=100000000, help="number of epochs of training")
 parser.add_argument("--batch_size", type=int, default=1, help="size of the batches")
 
-parser.add_argument("--lr_G", type=float, default=3e-4, help="adam: learning rate")
-parser.add_argument("--lr_D_1", type=float, default=3e-4, help="adam: learning rate")
-parser.add_argument("--lr_D_2", type=float, default=3e-4, help="adam: learning rate")
+parser.add_argument("--lr_G", type=float, default=0.0001, help="adam: learning rate")
+parser.add_argument("--lr_D_1", type=float, default=0.0001, help="adam: learning rate")
+parser.add_argument("--lr_D_2", type=float, default=0.0001, help="adam: learning rate")
 
 parser.add_argument("--weight_decay", type=float, default=0, help="adam: learning rate")
 parser.add_argument("--b1", type=float, default=0.5, help="adam: decay of first order momentum of gradient")
 parser.add_argument("--b2", type=float, default=0.999, help="adam: decay of first order momentum of gradient")
 parser.add_argument("--step_size", type=int, default=1000, help="adam: decay of first order momentum of gradient")
-parser.add_argument("--gamma", type=float, default=0.1, help="how much to decay learning rate")
+parser.add_argument("--gamma", type=float, default=0.5, help="how much to decay learning rate")
 parser.add_argument("--n_cpu", type=int, default=8, help="number of cpu threads to use during batch generation")
 parser.add_argument("--gpu_id", type=int, default=1, help="gpu id to train on")
 parser.add_argument("--seed", type=int, default=101, help="seed, None if you want a random seed")
@@ -55,7 +55,7 @@ parser.add_argument("--seed", type=int, default=101, help="seed, None if you wan
 parser.add_argument("--exp_name", type=str, default="", help="name of the experiment")
 parser.add_argument("--output_dir", type=str, default="./results", help="output directory")
 
-parser.add_argument("--log_interval", type=int, default=500, help="interval saving generator samples")
+parser.add_argument("--log_interval", type=int, default=55, help="interval saving generator samples")
 parser.add_argument("--checkpoint_interval", type=int, default=1, help="interval between saving model checkpoints")
 
 # Dataset parameters
@@ -145,21 +145,35 @@ if cuda:
     criterion_recon.to(device)
 
 # Optimizers
-optimizer_G = torch.optim.Adam(
+# optimizer_G = torch.optim.Adam(
+#     itertools.chain(Enc1.parameters(), Dec1.parameters(), Enc2.parameters(), Dec2.parameters()),
+#     lr=opt.lr_G,
+#     betas=(opt.b1, opt.b2), weight_decay=opt.weight_decay
+# )
+# optimizer_D1 = torch.optim.Adam(D1.parameters(), lr=opt.lr_D_1, betas=(opt.b1, opt.b2), weight_decay=opt.weight_decay)
+# optimizer_D2 = torch.optim.Adam(D2.parameters(), lr=opt.lr_D_2, betas=(opt.b1, opt.b2), weight_decay=opt.weight_decay)
+
+# Learning rate update schedulers
+# lr_scheduler_G = torch.optim.lr_scheduler.StepLR(optimizer_G, step_size=opt.step_size,
+#                                         gamma=opt.gamma, last_epoch=-1)
+# lr_scheduler_D1 = torch.optim.lr_scheduler.StepLR(optimizer_D1, step_size=opt.step_size,
+#                                         gamma=opt.gamma, last_epoch=-1)
+# lr_scheduler_D2 = torch.optim.lr_scheduler.StepLR(optimizer_D2, step_size=opt.step_size,
+#                                         gamma=opt.gamma, last_epoch=-1)
+
+# Optimizers (AdamW)
+optimizer_G = torch.optim.AdamW(
     itertools.chain(Enc1.parameters(), Dec1.parameters(), Enc2.parameters(), Dec2.parameters()),
     lr=opt.lr_G,
     betas=(opt.b1, opt.b2), weight_decay=opt.weight_decay
 )
-optimizer_D1 = torch.optim.Adam(D1.parameters(), lr=opt.lr_D_1, betas=(opt.b1, opt.b2), weight_decay=opt.weight_decay)
-optimizer_D2 = torch.optim.Adam(D2.parameters(), lr=opt.lr_D_2, betas=(opt.b1, opt.b2), weight_decay=opt.weight_decay)
+optimizer_D1 = torch.optim.AdamW(D1.parameters(), lr=opt.lr_D_1, betas=(opt.b1, opt.b2), weight_decay=opt.weight_decay)
+optimizer_D2 = torch.optim.AdamW(D2.parameters(), lr=opt.lr_D_2, betas=(opt.b1, opt.b2), weight_decay=opt.weight_decay)
 
-# Learning rate update schedulers
-lr_scheduler_G = torch.optim.lr_scheduler.StepLR(optimizer_G, step_size=opt.step_size,
-                                        gamma=opt.gamma, last_epoch=-1)
-lr_scheduler_D1 = torch.optim.lr_scheduler.StepLR(optimizer_D1, step_size=opt.step_size,
-                                        gamma=opt.gamma, last_epoch=-1)
-lr_scheduler_D2 = torch.optim.lr_scheduler.StepLR(optimizer_D2, step_size=opt.step_size,
-                                        gamma=opt.gamma, last_epoch=-1)
+# Learning rate update schedulers (CosineAnnealingLR)
+lr_scheduler_G = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer_G, T_max=500, eta_min=0, last_epoch=-1)
+lr_scheduler_D1 = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer_D1, T_max=500, eta_min=0, last_epoch=-1)
+lr_scheduler_D2 = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer_D2, T_max=500, eta_min=0, last_epoch=-1)
 
 if opt.epoch != 0:
     # Load pretrained models
@@ -188,13 +202,13 @@ Tensor = torch.cuda.FloatTensor if cuda else torch.Tensor
 
 # Dataset loader
 train_dataloader = DataLoader(
-    ImageDataset(base_dataset_dir=opt.dataset_dir, mode="train", normalize=opt.normalize, datatype='tif', seed=opt.seed, load_to_memory=True, size=opt.crop_size, test_idx=None),
+    ImageDataset(base_dataset_dir=opt.dataset_dir, mode="train", normalize=opt.normalize, datatype=opt.datatype, seed=opt.seed, load_to_memory=opt.load_to_memory, size=opt.crop_size, test_idx=None, augmentation=opt.augmentation),
     batch_size=opt.batch_size, num_workers=opt.n_cpu, shuffle=True
 )
 
 val_dataloader = DataLoader(
-    ImageDataset(base_dataset_dir=opt.dataset_dir, mode="test", normalize=opt.normalize, datatype='tif', seed=opt.seed, load_to_memory=True, size=opt.crop_size, test_idx=None),
-    batch_size=1, num_workers=1, shuffle=True
+    ImageDataset(base_dataset_dir=opt.dataset_dir, mode="test", normalize=opt.normalize, datatype=opt.datatype, seed=opt.seed, load_to_memory=opt.load_to_memory, size=opt.crop_size, test_idx=None, augmentation=False),
+    batch_size=1, num_workers=1, shuffle=False
 )
 
 def compute_loss_D_adv(model, x, gt):
@@ -224,6 +238,9 @@ for epoch in range(opt.epoch, opt.n_epochs):
         # Input data
         X_1 = Variable(batch["A"].type(Tensor)).to(device)
         X_2 = Variable(batch["B"].type(Tensor)).to(device)
+
+        # print(X_1.min(), X_1.max(), X_1.mean(), X_1.std())
+        # print(X_2.min(), X_2.max(), X_2.mean(), X_2.std())
 
         # Iniital feature maps
         Z_1 = Enc1(X_1)
@@ -303,7 +320,7 @@ for epoch in range(opt.epoch, opt.n_epochs):
         # Log
         batches_done = epoch * len(train_dataloader) + i
 
-        if batches_done % opt.log_interval == 0:
+        if (batches_done + 1) % opt.log_interval == 0:
             writer.add_scalar("00.Overall/01. Total Generator Loss", loss_G, batches_done)
             writer.add_scalar("00.Overall/02. Total Discriminator A->B Loss", loss_D1, batches_done)
             writer.add_scalar("00.Overall/03. Total Discriminator B->A Loss", loss_D2, batches_done)
@@ -385,7 +402,7 @@ for epoch in range(opt.epoch, opt.n_epochs):
                 
             writer.flush()
 
-
+    # print(batches_done+1)
     # Update learning rates
     lr_scheduler_G.step()
     lr_scheduler_D1.step()

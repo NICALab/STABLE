@@ -9,7 +9,7 @@ import torchvision.transforms as transforms
 from tqdm import tqdm
 
 class ImageDataset(Dataset):
-    def __init__(self, base_dataset_dir, mode, normalize='dataset', augmentation=True, datatype='tif', seed=None, load_to_memory=True, size=(480, 480), test_idx=None):
+    def __init__(self, base_dataset_dir, mode, normalize='dataset', compute_stats=False, percentiles=[45.67070738302002, 76.07678560652094], augmentation=True, datatype='tif', seed=None, load_to_memory=True, size=(480, 480), test_idx=None):
         assert mode in ['train', 'test'], "Mode should be 'train' or 'test'"
         assert datatype in ['tif', 'png'], "Mode should be 'train' or 'test'"
         assert normalize in ['dataset', 'data'], "Mode should be 'dataset' or 'data'"
@@ -20,6 +20,10 @@ class ImageDataset(Dataset):
         self.augmentation = augmentation
         self.normalize = normalize
         self.load_to_memory = load_to_memory
+        self.compute_stats = compute_stats
+        self.percentiles = percentiles
+
+        self.eps = 1e-7
 
         if seed != None:
             torch.manual_seed(seed)
@@ -39,66 +43,57 @@ class ImageDataset(Dataset):
             self.files_A = glob.glob(os.path.join(data_dir, "A") + "/*")
             self.files_B = glob.glob(os.path.join(data_dir, "B") + "/*")
 
-        A_sum = 0.0
-        A_sum_sq = 0.0
-        A_n_samples = 0
-
-        B_sum = 0.0
-        B_sum_sq = 0.0
-        B_n_samples = 0
-
         if self.load_to_memory:
             self.data_A = []
             self.data_B = []
+        
+        A_95_percentile = 0.0
+        B_95_percentile = 0.0
 
-        # if self.data_type == 'tif':
-        #     T, H, W = self.files_A.size
-        #     C = 1
-        # elif self.data_type == 'png':
-        #     H, W, C = self.files_A.size
+        A_n_samples = 0
+        B_n_samples = 0
 
         if self.normalize == "dataset" or self.load_to_memory:
             for file_A in tqdm(self.files_A, desc=f"Loading {mode}ing data from domain 1..."):
                 img_A = self.get_image(file_A)
                 
-                if self.normalize == "dataset":
-                    A_sum += torch.sum(img_A)
-                    A_sum_sq += torch.sum(img_A ** 2)
-                    A_n_samples += img_A.numel()
-                
+                if self.compute_stats:
+                    A_95_percentile += np.percentile(img_A, 95)
+                    A_n_samples += 1
+                    
                 if self.load_to_memory:
                     self.data_A.append(img_A)
                 
             for file_B in tqdm(self.files_B, desc=f"Loading {mode}ing data from domain 2..."):
                 img_B = self.get_image(file_B)
 
-                if self.normalize == "dataset":
-                    B_sum += torch.sum(img_B)
-                    B_sum_sq += torch.sum(img_B ** 2)
-                    B_n_samples += img_B.numel()
+                if self.compute_stats:
+                    B_95_percentile += np.percentile(img_B, 95)
+                    B_n_samples += 1
 
                 if self.load_to_memory:
                     self.data_B.append(img_B)
 
-        if self.normalize == "dataset":
-            self.A_mean = A_sum / A_n_samples
-            self.A_std = torch.sqrt(A_sum_sq / A_n_samples - self.A_mean ** 2)
+        if self.compute_stats:
+            self.A_95_percentile = A_95_percentile / A_n_samples + self.eps
+            self.B_95_percentile = B_95_percentile / B_n_samples + self.eps
+        else:
+            self.A_95_percentile = self.percentiles[0]
+            self.B_95_percentile = self.percentiles[1]
 
-            for data_A in tqdm(self.data_A, desc=f"Normalizing {mode}ing data from domain 1..."):
-                data_A = (data_A - self.A_mean) / self.A_std
-
-            self.B_mean = B_sum / B_n_samples
-            self.B_std = torch.sqrt(B_sum_sq / B_n_samples - self.B_mean ** 2)
-
-            for data_B in tqdm(self.data_B, desc=f"Normalizing {mode}ing data from domain 2..."):
-                data_B = (data_B - self.B_mean) / self.B_std
+        if self.normalize == "dataset" and self.load_to_memory:
+            for i, _ in enumerate(tqdm(self.data_A, desc=f"Normalizing {mode}ing data from domain 1...")):
+                self.data_A[i] = self.data_A[i] / self.A_95_percentile
+            
+            for i, _ in enumerate(tqdm(self.data_B, desc=f"Normalizing {mode}ing data from domain 2...")):
+                self.data_B[i] = self.data_B[i] / self.B_95_percentile
         
         elif self.normalize == "data":
-            for data_A in tqdm(self.data_A, desc=f"Normalizing {mode}ing data from domain 1..."):
-                data_A = (data_A - torch.mean(data_A)) / torch.std(data_A)
-
-            for data_B in tqdm(self.data_B, desc=f"Normalizing {mode}ing data from domain 2..."):
-                data_B = (data_B - torch.mean(data_B)) / torch.std(data_B)
+            for i, _ in enumerate(tqdm(self.data_A, desc=f"Normalizing {mode}ing data from domain 1...")):
+                self.data_A[i] = self.data_A[i] / ( np.percentile(self.data_A[i], 95 + self.eps) )
+                
+            for i, _ in enumerate(tqdm(self.data_B, desc=f"Normalizing {mode}ing data from domain 2...")):
+                self.data_B[i] = self.data_B[i] / ( np.percentile(self.data_B[i], 95 + self.eps) )
 
     def __len__(self):
         return max(len(self.files_A), len(self.files_B))
@@ -122,6 +117,7 @@ class ImageDataset(Dataset):
                 img = img[:3, :, :]
         else:
             img = torch.from_numpy(io.imread(file)).float() # [T, H, W]
+            img = np.clip(img, 0, None)
         return img
 
     def __getitem__(self, index):
@@ -134,11 +130,11 @@ class ImageDataset(Dataset):
             img_B = self.get_image(self.files_B[random.randint(0, len(self.files_B) - 1)])
 
             if self.normalize == "data":
-                img_A = (img_A - torch.mean(img_A)) / torch.std(img_A)
-                img_B = (img_B - torch.mean(img_B)) / torch.std(img_B)
+                img_A = img_A / ( np.percentile(img_A, 95) + self.eps)
+                img_B = img_B / ( np.percentile(img_B, 95) + self.eps)
             elif self.normalize == "dataset":
-                img_A = (img_A - self.A_mean) / self.A_std
-                img_B = (img_B - self.B_mean) / self.B_std
+                img_A = img_A / self.A_95_percentile
+                img_B = img_B / self.B_95_percentile
 
         # print(img_A.shape, img_B.shape)
 
@@ -162,3 +158,7 @@ class ImageDataset(Dataset):
             img_B = self.random_flip(img_B)
 
         return {"A": img_A, "B": img_B} 
+    
+
+# class ImageDataset_Infernce(Dataset):
+#     def __init__(self, base_dataset_dir, mode, normalize='dataset', compute_stats=False, percentiles=[45.67070738302002, 76.07678560652094], augmentation=True, datatype='tif', seed=None, load_to_memory=True, size=(480, 480), test_idx=None):
