@@ -265,7 +265,7 @@ for epoch in range(opt.epoch, opt.n_epochs):
             loss_com_rec_1 = criterion_recon_com(Z_12, Z_1.detach())
             loss_G += opt.lambda_com_rec_1 * loss_com_rec_1
 
-            loss_com_rec_2 = criterion_recon_com(Z_21, Z_2.detach())
+            loss_com_rec_2 = criterion_recon_com(Z_21.detach(), Z_2)
             loss_G += opt.lambda_com_rec_2 * loss_com_rec_2
 
             # Image cycle reconstruction loss
