@@ -25,10 +25,10 @@ The code has been tested with the following software versions:
 ## Installation
 
 1. Clone the repository:
-git clone https://github.com/NICALab/STABLE.git
+`git clone https://github.com/NICALab/STABLE.git`
 
 2. Navigate to the cloned folder:
 `cd ./STABLE`
 
 3. To train the model, run the following command template:
-python train.py --exp_name 'EXPERIMENT_NAME' --output_dir 'PATH_TO_OUTPUT_DIRECTORY' --dataset_dir 'PATH_TO_DATASET_DIRECTORY' --data_type 'c2n' for calcium imaging translation task or 'stain' for virtual staining task
+`python train.py --exp_name 'EXPERIMENT_NAME' --output_dir 'PATH_TO_OUTPUT_DIRECTORY' --dataset_dir 'PATH_TO_DATASET_DIRECTORY' --data_type 'c2n' for calcium imaging translation task or 'stain' for virtual staining task`
