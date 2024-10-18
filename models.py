@@ -165,6 +165,8 @@ class Up(nn.Module):
     
         x = torch.cat([x_skip, x_in], dim=1)
 
+        ret = self.conv(x)
+
         return self.conv(x)
 
 class OutConv(nn.Module):
