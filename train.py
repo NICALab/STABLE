@@ -55,6 +55,7 @@ parser.add_argument("--augmentation", type=int, default=1, help="augment data")
 parser.add_argument("--normalize", type=int, default=1, help="normalize data")
 parser.add_argument("--scale_ratio", type=float, default=[1.0, 1.0], nargs="+", help="scale ratio")
 parser.add_argument("--shuffle", type=int, default=1, help="shuffle data")
+parser.add_argument("--unpaired", type=int, default=1, help="unpaired data")
 
 # Generator parameters
 parser.add_argument("--n_ch_in", type=int, default=3, help="number of channels in the input image")
@@ -206,7 +207,7 @@ if opt.data_type == "c2n":
     )
 elif opt.data_type == "stain":
     train_dataloader = DataLoader(
-        HnEDataset(base_dataset_dir=opt.dataset_dir, mode="train", normalize=opt.normalize, seed=opt.seed, size=opt.crop_size, augmentation=opt.augmentation, scale_ratio=opt.scale_ratio, shuffle=opt.shuffle),
+        HnEDataset(base_dataset_dir=opt.dataset_dir, mode="train", normalize=opt.normalize, seed=opt.seed, size=opt.crop_size, augmentation=opt.augmentation, scale_ratio=opt.scale_ratio, shuffle=opt.unpaired),
         batch_size=opt.batch_size, num_workers=opt.n_cpu, shuffle=opt.shuffle, drop_last=True
     )
     val_dataloader = DataLoader(
