@@ -300,3 +300,13 @@ class DySample(nn.Module):
         if self.style == 'pl':
             return self.forward_pl(x)
         return self.forward_lp(x)
+
+
+if __name__ == '__main__':
+    import torchsummary as summary
+    import warnings
+    warnings.filterwarnings("ignore", category=UserWarning)
+    # Encoder
+    model = UNet(n_in=3, n_out=3, mid_channels=[32, 64, 128, 256], norm_type="batch", demodulated=True, act='relu', momentum=0.1)
+    
+    summary.summary(model, (3, 256, 256), device='cpu')
