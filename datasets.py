@@ -8,8 +8,9 @@ import torch
 import torchvision.transforms as transforms
 from tqdm import tqdm
 
+
 class ImageDataset(Dataset):
-    def __init__(self, base_dataset_dir, mode, normalize=True, augmentation=True, seed=101, size=(128, 128), test_idx=None, scale_ratio=(1.0, 1.0), shuffle=False, cutmix=False):
+    def __init__(self, base_dataset_dir, mode, normalize=True, augmentation=True, seed=0, size=(128, 128), scale_ratio=(1.0, 1.0)):
         assert mode in ['train', 'test'], "Mode should be 'train' or 'test'"
 
         self.size = size
@@ -17,6 +18,7 @@ class ImageDataset(Dataset):
         self.normalize = normalize
         self.scale_ratio = scale_ratio
         self.mode= mode
+
         self.eps = 1e-7
 
         if seed != None:
@@ -37,7 +39,7 @@ class ImageDataset(Dataset):
         self.data_B = []
 
         for file_A in tqdm(self.files_A, desc=f"Loading {mode}ing data from domain 1..."):
-            img = self.get_image(file_A, 0, normalize,)
+            img = self.get_image(file_A, 0, normalize)
             if len(img.shape) == 2:
                 img = img.unsqueeze(0)
             if img.shape[1] >= self.size and img.shape[2] >= self.size:
@@ -65,9 +67,6 @@ class ImageDataset(Dataset):
             img = transforms.functional.vflip(img)
         return img
     
-    def substring_exists(self, s, sub):
-        return sub in s
-    
     def get_image(self, file, domain, normalize=True):
         img = torch.from_numpy(io.imread(file)).float()
         while len(img.shape) < 4:
@@ -90,7 +89,7 @@ class ImageDataset(Dataset):
 
         img_A = img_A[random_idx_A:random_idx_A+1, :, :]
         img_B = img_B[random_idx_B:random_idx_B+1, :, :]
-            
+
         if self.size != None:
             if self.mode == "train":
                 random_crop = transforms.RandomCrop((self.size, self.size))
@@ -111,17 +110,14 @@ class ImageDataset(Dataset):
 
 
 class HnEDataset(Dataset):
-    def __init__(self, base_dataset_dir, mode, normalize=True, augmentation=True, seed=101, size=(128, 128), scale_ratio=(1.0, 1.0), shuffle=False, cutmix=False):
+    def __init__(self, base_dataset_dir, mode, normalize=True, augmentation=True, seed=0, size=(128, 128),  scale_ratio=(1.0, 1.0), shuffle=False):
         assert mode in ['train', 'test'], "Mode should be 'train' or 'test'"
-
         self.mode = mode
         self.size = size
         self.augmentation = augmentation
         self.normalize = normalize
         self.scale_ratio = scale_ratio
         self.shuffle = shuffle
-
-        self.eps = 1e-7
 
         if seed != None:
             torch.manual_seed(seed)
@@ -142,22 +138,22 @@ class HnEDataset(Dataset):
 
         for file_A in tqdm(self.files_A, desc=f"Loading {mode}ing data from domain 1..."):
             try:
-                img = self.get_image_255_LivetoHnE(file_A, 0, normalize)
+                img = self.get_image_255_LivetoHnE(file_A, 0)
                 if len(img.shape) == 2:
                     img = img.unsqueeze(0)
                 if img.shape[-1] >= self.size or img.shape[-2] >= self.size:
-                    self.data_A.append(img)
+                    self.data_A.append((img, file_A))
             except IOError:
                 print("Image is truncated or corrupted.")
                 continue
             
         for file_B in tqdm(self.files_B, desc=f"Loading {mode}ing data from domain 2..."):
             try:
-                img = self.get_image_255_LivetoHnE(file_B, 1, normalize)
+                img = self.get_image_255_LivetoHnE(file_B, 1)
                 if len(img.shape) == 2:
                     img = img.unsqueeze(0)
                 if img.shape[-1] >= self.size or img.shape[-2] >= self.size:
-                    self.data_B.append(img)
+                    self.data_B.append((img, file_B))
             except IOError:
                 print("Image is truncated or corrupted.")
                 continue
@@ -180,7 +176,7 @@ class HnEDataset(Dataset):
     def substring_exists(self, s, sub):
         return sub in s
     
-    def get_image_255_LivetoHnE(self, file, domain, normalize=True):
+    def get_image_255_LivetoHnE(self, file, domain):
         img = torch.from_numpy(io.imread(file)).to(torch.uint8)
         if len(img.shape) == 2:
             img = img.unsqueeze(0)
@@ -193,15 +189,15 @@ class HnEDataset(Dataset):
 
     def __getitem__(self, index):
 
-        img_A = self.data_A[index % len(self.data_A)]
+        img_A, path_A = self.data_A[index % len(self.data_A)]
 
         if self.mode == "train":
             if self.shuffle == True:
-                img_B = self.data_B[random.randint(0, len(self.data_B) - 1)]
+                img_B, path_B = self.data_B[random.randint(0, len(self.data_B) - 1)]
             else:
-                img_B = self.data_B[index % len(self.data_B)]
+                img_B, path_B = self.data_B[index % len(self.data_B)]
         else:
-            img_B = self.data_B[index % len(self.data_B)]
+            img_B, path_B = self.data_B[index % len(self.data_B)]
 
         img_A = img_A.float()
         img_B = img_B.float()
@@ -225,4 +221,7 @@ class HnEDataset(Dataset):
             img_B = self.random_rotate(img_B)
             img_B = self.random_flip(img_B)
 
-        return {"A": img_A, "B": img_B} 
+        if self.mode == "train":
+            return {"A": img_A, "B": img_B} 
+        else:
+            return {"A": img_A, "B": img_B, "path_A": path_A, "path_B": path_B}
