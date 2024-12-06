@@ -97,7 +97,7 @@ else:
 if opt.exp_name == None:
     from datetime import date
     today = date.today().strftime("%d%m%Y")
-    opt.exp_name = f"{today}_gpu_{'_'.join(map(str, opt.gpu_ids))}_seed_{opt.seed}_{os.path.basename(opt.dataset_dir)}_{opt.crop_size}_zch_{opt.n_ch_com}"
+    opt.exp_name = f"{today}_seed_{opt.seed}_{os.path.basename(opt.dataset_dir)}_{opt.crop_size}_zch_{opt.n_ch_com}"
 
 if opt.exp_tag != None:
     opt.exp_name = f"{opt.exp_name}_{opt.exp_tag}"
@@ -197,7 +197,7 @@ opt.scale_ratio = (opt.scale_ratio[0], opt.scale_ratio[1])
 
 if opt.data_type == "c2n":
     train_dataloader = DataLoader(
-        ImageDataset(base_dataset_dir=opt.dataset_dir, mode="train", normalize=opt.normalize, seed=opt.seed, size=opt.crop_size, augmentation=opt.augmentation, scale_ratio=opt.scale_ratio, shuffle=opt.shuffle),
+        ImageDataset(base_dataset_dir=opt.dataset_dir, mode="train", normalize=opt.normalize, seed=opt.seed, size=opt.crop_size, augmentation=opt.augmentation, scale_ratio=opt.scale_ratio),
         batch_size=opt.batch_size, num_workers=opt.n_cpu, shuffle=opt.shuffle, drop_last=True
     )
     val_dataloader = DataLoader(
