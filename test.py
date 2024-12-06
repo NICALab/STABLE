@@ -21,6 +21,8 @@ from skimage import io
 import glob
 from types import SimpleNamespace
 
+from torchvision.utils import save_image
+
 
 # ignore user warnings
 warnings.simplefilter("ignore", UserWarning)
@@ -78,13 +80,25 @@ Dec2.eval()
 
 opt.scale_ratio = (opt.scale_ratio[0], opt.scale_ratio[1])
 
-data_test = glob.glob(f"{opt_test.img_dir}/*.*")
-print(f"Number of test images: {len(data_test)}")
+
+if opt.data_type == "c2n":
+    val_dataloader = DataLoader(
+        ImageDataset(base_dataset_dir=opt.dataset_dir, mode="test", normalize=opt.normalize, seed=opt.seed, size=opt.crop_size, augmentation=False, scale_ratio=opt.scale_ratio),
+        batch_size=1, num_workers=1, shuffle=False, drop_last=True
+    )
+elif opt.data_type == "stain":
+    val_dataloader = DataLoader(
+        HnEDataset(base_dataset_dir=opt.dataset_dir, mode="test", normalize=opt.normalize, seed=opt.seed, size=opt.crop_size, augmentation=False, scale_ratio=opt.scale_ratio),
+        batch_size=1, num_workers=1, shuffle=False, drop_last=True
+    )
+
+print("Length of Val Dataloader: ", len(val_dataloader))
 
 with torch.no_grad():
-    for i in tqdm(range(len(data_test)), desc=f"Testing..."):
-        img_path = data_test[i]
-        X_1 = torch.from_numpy(io.imread(img_path).astype(np.float32)).to(device)
+    # for i, batch in enumerate(tqdm(val_dataloader, desc=f"Running inference", position=1, leave=False)):
+    for i, batch in enumerate(val_dataloader):
+        X_1 = Variable(batch["A"].type(Tensor)).to(device)
+        X_1_path = batch["path_A"][0]
         if len(X_1.shape) == 2:
             X_1 = X_1.unsqueeze(0).unsqueeze(0)
         elif len(X_1.shape) == 3:
@@ -93,10 +107,12 @@ with torch.no_grad():
         Z_1 = Enc1(X_1)
         X_12 = Dec2(Z_1)
 
-        filename = os.path.splitext(os.path.basename(img_path))[0]
+        filename = os.path.splitext(os.path.basename(X_1_path))[0]
 
         # Save images
-        in_img_dir = os.path.join(saved_images_in_dir, f"{filename}_in_{i}.tif")
-        trans_img_dir = os.path.join(saved_images_trans_dir, f"{filename}_trans_{i}.tif")
-        io.imsave(in_img_dir, X_1.detach().cpu().numpy(), metadata={'axes': 'TYX'})
-        io.imsave(trans_img_dir, X_12.detach().cpu().numpy(), metadata={'axes': 'TYX'})
+        in_img_dir = os.path.join(saved_images_in_dir, f"{filename}_in_{i}.png")
+        trans_img_dir = os.path.join(saved_images_trans_dir, f"{filename}_trans_{i}.png")
+
+        # save using save_image
+        save_image(X_1, in_img_dir)
+        save_image(X_12, trans_img_dir)
