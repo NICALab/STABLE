@@ -283,5 +283,5 @@ class StableTrainer:
                     Z_1, Z_2, X_12, X_21, Z_12, Z_21, X_121, X_212 = self.model.forward_G(X_1, X_2)
                     self.log_images(epoch, 'Val', X_1, X_2, Z_1, Z_2, X_12, X_21, Z_12, Z_21, X_121, X_212)
                     
-            if epoch % self.checkpoint_epoch == 0:
+            if (epoch + 1) % self.checkpoint_epoch == 0:
                 self.save_state_dict(epoch)
