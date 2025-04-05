@@ -4,10 +4,28 @@ import json
 import numpy as np
 from tqdm import tqdm
 from skimage import io
+import torch
+from torchvision.utils import save_image
 from torch.utils.data import DataLoader
 from stable.stable_dataset import StableInferenceDataset
 from stable.stable_model import StableModel
 from stable.stable_trainer import StableTrainer
+
+def normalize_tensor(tensor):
+    # Clone the tensor to avoid modifying the original in-place
+    tensor = tensor.clone()
+
+    # Compute the minimum and maximum values from the tensor
+    low = float(tensor.min())
+    high = float(tensor.max())
+
+    # Clamp the tensor to ensure values are within [low, high]
+    tensor.clamp_(min=low, max=high)
+    
+    # Subtract the minimum and divide by the range (using a small epsilon to avoid division by zero)
+    tensor.sub_(low).div_(max(high - low, 1e-7))
+    
+    return tensor
 
 def infer(args):
     
@@ -55,27 +73,38 @@ def infer(args):
         
         # Check if we have moved to a new file (and not on the very first file)
         if previous_filename is not None and X_1_filename != previous_filename:
-            # Stack accumulated outputs along axis 0
-            X_12_stack = np.stack(X_12_full, axis=0)
-            
-            # Get sample name from the previous file
+
             testfile = os.path.splitext(os.path.basename(previous_filename))[0]
-            io.imsave(os.path.join(args.result_dir, f"{testfile}_translated.tif"), X_12_stack)
+            
+            X_12_stack = torch.stack(X_12_full, axis=0)            
+            X_12_stack = normalize_tensor(X_12_stack)
+            
+            if args.dim_order == "CHW" or args.dim_order == "HWC" or args.dim_order == "ZCHW" or args.dim_order == "CHWZ":
+                save_image(X_12_stack, os.path.join(args.result_dir, f"{testfile}_translated.tif"), normalize=True)
+            else:
+                io.imsave(os.path.join(args.result_dir, f"{testfile}_translated.tif"), X_12_stack.numpy())
+                
             print(f"Saved translation and input for {testfile}")
             
             # Reset accumulators for the new file
             X_12_full = []
             
         # Append current batch outputs
-        X_12_full.append(X_12.squeeze().detach().cpu().numpy())
+        X_12_full.append(X_12.squeeze().detach().cpu())
         previous_filename = X_1_filename
         
     if X_12_full:
-        X_12_stack = np.stack(X_12_full, axis=0)
 
         testfile = os.path.splitext(os.path.basename(previous_filename))[0]
-        io.imsave(os.path.join(args.result_dir, f"{testfile}_translated.tif"), X_12_stack)
         
+        X_12_stack = torch.stack(X_12_full, axis=0)            
+        X_12_stack = normalize_tensor(X_12_stack)
+        
+        if args.dim_order == "CHW" or args.dim_order == "HWC" or args.dim_order == "ZCHW" or args.dim_order == "CHWZ":
+            save_image(X_12_stack, os.path.join(args.result_dir, f"{testfile}_translated.tif"), normalize=True)
+        else:
+            io.imsave(os.path.join(args.result_dir, f"{testfile}_translated.tif"), X_12_stack.numpy())
+            
         print(f"Saved translation and input for {testfile}")
             
     print("Inference complete")
