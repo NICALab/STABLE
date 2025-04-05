@@ -254,7 +254,7 @@ class StableTrainer:
                 loss_D2.backward()
                 self.optimizer_D2.step()
 
-                if (self.batches_done + 1) % self.log_train_iter == 0:
+                if self.batches_done % self.log_train_iter == 0:
                     self.writer.add_scalar("00.Overall (Train)/01. Total Generator Loss", loss_G, self.batches_done)
                     self.writer.add_scalar("00.Overall (Train)/02. Total Discriminator A Loss", loss_D1, self.batches_done)
                     self.writer.add_scalar("00.Overall (Train)/03. Total Discriminator B Loss", loss_D2, self.batches_done)
@@ -271,7 +271,7 @@ class StableTrainer:
                     
                 self.batches_done += 1
                 
-            if (epoch + 1) % self.log_val_epoch == 0:
+            if epoch % self.log_val_epoch == 0:
                 self.model.eval()
                 with torch.no_grad():
                     batch = next(iter(val_dataloader))
@@ -283,5 +283,5 @@ class StableTrainer:
                     Z_1, Z_2, X_12, X_21, Z_12, Z_21, X_121, X_212 = self.model.forward_G(X_1, X_2)
                     self.log_images(epoch, 'Val', X_1, X_2, Z_1, Z_2, X_12, X_21, Z_12, Z_21, X_121, X_212)
                     
-            if (epoch + 1) % self.checkpoint_epoch == 0:
+            if epoch % self.checkpoint_epoch == 0:
                 self.save_state_dict(epoch)
