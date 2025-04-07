@@ -304,7 +304,10 @@ python -m stable.infer \
 
 ## Packaging as a Python Package
 
-The repository is structured as a Python package. With the provided [`setup.py`](setup.py), you can install the package using pip. This makes it easier to use external datasets as long as they adhere to the expected directory structure.
+The repository is structured as a Python package. With the provided [`setup.py`](setup.py), you can install the package using pip:
+```bash
+pip install .
+```
 
 After installing, the command-line tools `stable_train` and `stable_infer` will be available globally (replacing `python -m stable.train` and `python -m stable.infer` from previous examples), allowing you to train and perform inference on any compatible dataset.
 
