@@ -64,7 +64,7 @@ The list of Python packages and dependencies are specified in the [`requirements
    pip install .
    ```
 
-3. **(Optional) Setup a Virtual Environment**  
+**(Optional) Setup a Virtual Environment**  
    It is recommended to use a Conda or virtualenv environment:
    ```bash
    conda create -n stable_env python=3.11
