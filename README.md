@@ -269,6 +269,7 @@ python -m stable.train \
   --lambda_info 10 \
   --lambda_cyc 1 \
   --lambda_cyc_growth_target 5000 \
+  --epoch_end 5000 \
   --log_train_iter 100 \
   --log_val_epoch 100 \
   --checkpoint_epoch 100 \
