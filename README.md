@@ -16,7 +16,6 @@ This repository contains the open-source code for the paper:
 - [Usage](#usage)
   - [Training](#training)
   - [Inference](#inference)
-  - [Argument Explanations](#argument-explanations)
 - [Example: Calcium Imaging Dataset](#example-calcium-imaging-dataset)
 - [Packaging as a Python Package](#packaging-as-a-python-package)
 - [License](#license)
